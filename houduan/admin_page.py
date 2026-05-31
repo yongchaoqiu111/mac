@@ -342,7 +342,7 @@ def admin_page():
         chains_count = 0
         
         # 直接调用服务器API获取所有备份
-        list_response = requests.get(f'{SERVER_API}/api/wallet/list')
+        list_response = requests.post(f'{SERVER_API}/api/wallet/list', json={})
         
         if list_response.status_code == 200:
             data = list_response.json()

